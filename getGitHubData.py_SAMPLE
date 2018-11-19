@@ -1,0 +1,84 @@
+"""
+Exports Issues from a list of repositories to individual CSV files
+Uses basic authentication (Github API Token and Zenhub API Token)
+to retrieve Issues from a repository that token has access to.
+Supports Github API v3 and ZenHubs current working API.
+Derived from https://gist.github.com/Kebiled/7b035d7518fdfd50d07e2a285aff3977
+"""
+import csv
+import requests
+import json
+
+## ZenHub Data ##
+def write_issues(r, csvout, repo_name, repo_ID):
+	if not r.status_code == 200:
+		raise Exception(r.status_code)
+
+	r_json = r.json()
+	for issue in r_json:
+		print(repo_name+' issue Number: '+str(issue['number']))
+		#zenhub_issue_url = 'https://api.zenhub.io/p1/repositories/'+str(repo_ID)+'/issues/'+str(issue['number'])+ACCESS_TOKEN
+		zenhub_issue_url = 'https://zenhub.ibm.com/p1/repositories/'+str(repo_ID)+'/issues/'+str(issue['number'])+ACCESS_TOKEN
+		zen_r = requests.get(zenhub_issue_url).json()
+		if 'pull_request' not in issue:
+			sAssigneeList = ''
+			sLabelList = ''
+			sMilestoneList = ''
+			for i in issue['assignees'] if issue['assignees'] else []:
+				sAssigneeList += i['login']+'|'
+			for x in issue['labels'] if issue['labels'] else []:
+				sLabelList += x['name']+'|'
+
+			EstimateValue = zen_r.get('estimate', dict()).get('value', "")
+			Pipeline = zen_r.get('pipeline', dict()).get('name', "")
+			csvout.writerow([repo_name, issue['number'], issue['title'], sLabelList, issue['user']['login'], issue['created_at'],
+			 issue['milestone']['title'] if issue['milestone'] else "", sAssigneeList, issue['body'], EstimateValue, Pipeline])
+
+
+## GitHub Data ##
+def get_issues(repo_data):
+	repo_name = repo_data[0]
+	repo_ID = repo_data[1]
+	print(repo_name)
+	print(repo_ID)
+	print(ISSUES_FOR_REPO_URL)
+	r = requests.get(ISSUES_FOR_REPO_URL, auth=AUTH)
+	write_issues(r, csvout, repo_name, repo_ID)
+	# more pages? examine the 'link' header returned
+	if 'link' in r.headers:
+		pages = dict(
+			[(rel[6:-1], url[url.index('<')+1:-1]) for url, rel in
+				[link.split(';') for link in
+					r.headers['link'].split(',')]])
+		while 'last' in pages and 'next' in pages:
+			pages = dict(
+				[(rel[6:-1], url[url.index('<')+1:-1]) for url, rel in
+					[link.split(';') for link in
+						r.headers['link'].split(',')]])
+			r = requests.get(pages['next'], auth=AUTH)
+			write_issues(r, csvout, repo_name, repo_ID)
+			if pages['next'] == pages['last']:
+				break
+
+
+## CONFIGS ##
+REPO_LIST = [("<REPO_OWNER>/<REPO>", "<REPO_ID>")]
+
+### Non-Enterprise Repo
+#ISSUES_FOR_REPO_URL = 'https://api.github.com/repos/<REPO_OWNER>/<REPO>/issues'
+
+### Enterprise Repo
+#ISSUES_FOR_REPO_URL = 'https://github.ibm.com/api/v3/repos/<REPO_OWNER>/<REPO>/issues'
+
+AUTH = '***GitHubUserID***','***GitHubPersonalAccessToken***'
+ACCESS_TOKEN = '?access_token=***ZenHubAPIToken***'
+CSVFILENAME = 'gitHubList_<REPO>.csv'
+
+
+## MAIN ##
+csvfile = open(CSVFILENAME, 'w', encoding='utf8')
+csvout = csv.writer(csvfile)
+csvout.writerow(('Repository', 'Issue Number', 'Issue Title', 'Labels', 'Issue Author', 'Created At', 'Milestone', 'Assigned To', 'Issue Content', 'Estimate Value', 'Pipeline Name'))
+for repo_data in REPO_LIST:
+	get_issues(repo_data)
+csvfile.close()
